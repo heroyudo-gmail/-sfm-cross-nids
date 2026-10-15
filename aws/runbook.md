@@ -1,0 +1,645 @@
+# Runbook T10 — UNSW-NB15 Real-Traffic (3-EC2, pola NIDS-01)
+
+> Panduan eksekusi **berurutan** + cara **resume cepat** + cara **hapus infra** setelah selesai.
+> Pengetahuan disimpan di sini agar percobaan bisa diulang cepat. **Region:** ap-southeast-1.
+> Semua hasil (pcap, metrik, FAR) diunggah ke S3 SEBELUM infra dihapus.
+
+---
+
+## 0. Arsitektur (ringkas)
+
+- **VPC** `10.5.0.0/16` — public subnet (Attacker) + private subnet (Target, Analyzer) + IGW + NAT.
+- **Attacker** (public): jalankan serangan (Fase 2).
+- **Target** (private): layanan SSH/HTTP + **CAPTURE di sini** (pelajaran NIDS-01).
+- **Analyzer** (private): NFStream (9 fitur SFM) + inferensi XGBoost + metrik.
+- Akses instance via **SSM Session Manager** (bukan SSH publik). Butuh NAT aktif.
+- IaC: `unsw-vpc-3ec2.yaml` (satu stack gabungan). Biaya: `cost-estimate.md`.
+
+---
+
+## 1. Prasyarat (sekali)
+
+**Bucket S3:** `ssh-detection-features-232032302717` (sama dengan NIDS-01).
+
+- **Model + meta (dari SageMaker):** jalankan `notebooks/09_model_efficiency.ipynb` sampai
+  sel terakhir. Sel itu otomatis:
+  - menyimpan `modelA_9feat.json` (model XGBoost 9-fitur) dan
+  - `deploy_meta_9feat.json` (`{"features":[9], "scaler_mean":[9], "scaler_scale":[9]}`), lalu
+  - **mengunggah keduanya** ke `s3://ssh-detection-features-232032302717/unsw-far/models/`.
+  (Jika upload gagal karena izin, upload manual dengan `aws s3 cp` — perintah tercetak di notebook.)
+- **Skrip → S3:** `unsw_extract_infer.py`, `capture_target.sh`, `attack_scenario.sh`,
+  `benign_traffic.sh` → `s3://ssh-detection-features-232032302717/unsw-far/scripts/`.
+  > **Cara cepat (satu perintah):** dari folder `aws/`, jalankan `./upload_to_s3.sh`. Skrip ini
+  > otomatis: (a) **GATE** memverifikasi `unsw_extract_infer.py` sudah versi ter-FIX (`dur_feat_us`),
+  > (b) cek kredensial & akses bucket, (c) upload keempat skrip (+ model bila ada di folder), lalu
+  > (d) menampilkan isi S3. Batal bila gate/kredensial gagal. Override: `S3_BUCKET=... REGION=... ./upload_to_s3.sh`.
+  > **Pastikan `unsw_extract_infer.py` sudah versi ter-FIX** (fitur `duration` dalam
+  > MIKRODETIK agar cocok scaler CIC, `dur_feat_us = dur_ms*1000`; pembagi laju tetap
+  > detik `dur_s = dur_ms/1000`). Cek: `grep dur_feat_us unsw_extract_infer.py`
+  > harus muncul sebelum di-upload. Lihat prasyarat ramp di Bagian 3A.
+
+> EC2 tidak perlu SageMaker: cukup `aws s3 cp` dari bucket di atas (langkah §2).
+
+---
+
+## 2. Deploy infra (DUA stack terpisah: VPC lalu EC2)
+
+> Arsitektur T10: **2 EC2** = **Attacker** + **Target+Analyzer (GABUNGAN)**, keduanya
+> di PRIVATE subnet, internet via NAT, akses via SSM. Karena capture & inferensi di
+> SATU mesin (target-analyzer), TIDAK perlu upload/download pcap antar-node.
+> (Template lama 3-EC2 `unsw-vpc-3ec2.yaml` tetap disimpan untuk referensi.)
+
+**2.1 Stack VPC** (jaringan + NAT + SG + IAM):
+```bash
+aws cloudformation create-stack --stack-name unsw-far-vpc \
+  --template-body file://unsw-vpc.yaml \
+  --capabilities CAPABILITY_NAMED_IAM --region ap-southeast-1
+aws cloudformation wait stack-create-complete --stack-name unsw-far-vpc --region ap-southeast-1
+```
+
+**2.2 Stack EC2** (2 instance; mereferensikan VPC via ImportValue — `ProjectName` harus
+sama, default `unsw-far`):
+```bash
+aws cloudformation create-stack --stack-name unsw-far-ec2 \
+  --template-body file://unsw-2ec2.yaml \
+  --capabilities CAPABILITY_NAMED_IAM --region ap-southeast-1
+aws cloudformation wait stack-create-complete --stack-name unsw-far-ec2 --region ap-southeast-1
+aws cloudformation describe-stacks --stack-name unsw-far-ec2 --region ap-southeast-1 \
+  --query "Stacks[0].Outputs" --output table
+```
+Catat Output: `AttackerId, TargetAnalyzerId, AttackerPrivateIp, TargetAnalyzerPrivateIp`.
+
+Verifikasi SSM online (~2 menit):
+```bash
+aws ssm describe-instance-information --region ap-southeast-1 \
+  --query "InstanceInformationList[].{Id:InstanceId,Ping:PingStatus}" --output table
+```
+
+Unduh skrip+model di **Target+Analyzer** (via SSM shell; capture & inferensi satu mesin):
+```bash
+export S3_BUCKET=ssh-detection-features-232032302717
+aws s3 cp s3://$S3_BUCKET/unsw-far/scripts/ /opt/unsw/scripts/ --recursive
+aws s3 cp s3://$S3_BUCKET/unsw-far/models/  /opt/unsw/models/  --recursive
+chmod +x /opt/unsw/scripts/*.sh
+```
+
+---
+
+## 3. FASE 1 — FAR (TANPA serangan)
+
+> **JANGAN langsung 24 jam.** Jalankan **RAMP BERTAHAP S0->D1->D2->D3 (Bagian 3A)** dulu:
+> smoke ~3m (gate) -> **1 jam** -> **6 jam** -> **24 jam**, tiap tahap lolos GATE. Bagian
+> di bawah ini (24 jam kontinu) adalah tahap **D3** — dijalankan HANYA setelah S0/D1/D2 lolos.
+>
+> **Desain multi-durasi (percobaan bertahap untuk PERBANDINGAN, bukan sekadar gate).**
+> Titik durasi: **1 jam -> 6 jam -> 24 jam**, lalu eskalasi opsional **3 hari -> 7 hari**.
+> Tujuannya bukan cuma validasi pipeline, tetapi **membandingkan FAR antar-durasi observasi**
+> (lihat Tabel §7.2) — membuktikan FAR rendah **stabil** seiring waktu, bukan artefak snapshot
+> pendek. Setiap durasi memakai infra yang SAMA; hanya waktu capture yang berbeda. Eskalasi
+> 3-7 hari (variasi weekday/weekend) dijalankan setelah 24 jam kredibel.
+>
+> **Penting agar FAR berisi:** jaga trafik normal tetap aktif (banyak flow benign) selama
+> 24 jam — curl loop + unduhan berkala + sesi SSH terjadwal. FAR dari puluhan ribu flow
+> jauh lebih kuat daripada dari puluhan flow.
+
+Di **Target+Analyzer** (mesin gabungan; biarkan berjalan ~24 jam):
+```bash
+cd /opt/unsw/scripts && sudo S3_BUCKET=ssh-detection-features-232032302717 ./capture_target.sh far
+```
+Bangkitkan trafik NORMAL (cron/loop di Target atau dari Attacker): `curl` berkala,
+`dnf update`, unduhan, sesi SSH sah. TIDAK ADA serangan pada fase ini.
+
+Per jam / berkala, di **mesin yang sama** (proses pcap yang sudah dirotasi; capture &
+inferensi satu host, TIDAK perlu transfer antar-node):
+```bash
+# (opsional) backup pcap ke S3
+aws s3 cp /opt/unsw/captures/ s3://ssh-detection-features-232032302717/unsw-far/captures/ --recursive
+export S3_BUCKET=ssh-detection-features-232032302717
+python3 /opt/unsw/scripts/unsw_extract_infer.py far /opt/unsw/captures/far_YYYYMMDD_HH.pcap
+```
+Hasil FAR ditambahkan ke `/opt/unsw/results/far_log.jsonl` (+ auto-upload S3).
+
+---
+
+## 3A. RAMP BERTAHAP S0 -> D1(1j) -> D2(6j) -> D3(24j) -> [D4(3h) -> D5(7h)] — WAJIB berurutan
+
+> **Alasan:** langsung 24 jam berisiko — bila ada error di tengah (mismatch satuan
+> fitur, capture 0 flow, gagal rotasi/upload) biaya jam-jaman terbuang. Ramp menaikkan
+> durasi bertahap; tiap tahap punya **GATE terukur**. Bila gate GAGAL -> **STOP**, jangan
+> naik tahap; diagnosa & perbaiki dulu, lalu ulang tahap dari awal.
+> Kaitan spec: `.kiro/specs/t10-ramp-execution/requirements.md`.
+>
+> **Peta tahap & tujuan ganda (gate + titik perbandingan FAR):**
+>
+> | Tahap | Durasi | Peran | Dilaporkan di paper? |
+> |---|---|---|---|
+> | **S0** | ~3 menit | smoke test: gate pipeline (flow>0, no error, satuan `duration` detik) | tidak (internal) |
+> | **D1** | 1 jam | FAR titik-1 + gate satuan/scaler (\|z\|<=6, FAR!=1) | ya (baris tabel) |
+> | **D2** | 6 jam | FAR lintas beberapa jam (variasi intra-hari) | ya (baris tabel) |
+> | **D3** | 24 jam | FAR satu siklus harian penuh (siang/malam) | ya (baris tabel) |
+> | **D4** | 3 hari | eskalasi: variasi weekday | ya (opsional) |
+> | **D5** | 7 hari | eskalasi: variasi weekday/weekend | ya (opsional) |
+>
+> Setiap D1-D5 mengisi satu baris **Tabel Perbandingan FAR Antar-Durasi (§7.2)**.
+
+### Prasyarat ramp (sebelum S0)
+- **Satuan `duration` sudah diselaraskan** di `unsw_extract_infer.py`: fitur `duration`
+  dihitung **MIKRODETIK** (`dur_feat_us = dur_ms*1000`). Alasan (hasil audit 9 fitur):
+  scaler deployment di-fit pada **CIC `Flow Duration` (mikrodetik)**, jadi extractor wajib
+  menghasilkan mikrodetik agar z-score cocok (bila detik -> mismatch 1e6x, gate D1-b gagal).
+  Pembagi laju **tetap detik** (`dur_s = dur_ms/1000`) karena `src_load` (CIC `Flow Byts/s`,
+  byte/**detik**) & `dst_load` (CIC `Bwd Pkts/s`, paket/**detik**) memang per-detik — sudah
+  benar & tak diubah. Fitur duration dan pembagi laju sengaja beda satuan.
+- **Upload ulang skrip terbaru ke S3 + verifikasi Analyzer mengunduhnya:**
+  ```bash
+  # dari mesin kerja (yang memegang skrip terbaru)
+  aws s3 cp unsw_extract_infer.py \
+    s3://ssh-detection-features-232032302717/unsw-far/scripts/unsw_extract_infer.py --region ap-southeast-1
+  # di ANALYZER (via SSM), tarik ulang lalu cek baris fix ada
+  aws s3 cp s3://ssh-detection-features-232032302717/unsw-far/scripts/ /opt/unsw/scripts/ --recursive
+  grep -n "dur_feat_us" /opt/unsw/scripts/unsw_extract_infer.py   # harus muncul
+  ```
+- **Attacker di-stop** selama seluruh Fase 1 (tak dipakai untuk FAR) — hemat biaya:
+  ```bash
+  aws ec2 stop-instances --region ap-southeast-1 --instance-ids <AttackerId>
+  ```
+- **Trafik benign harus aktif** selama tiap tahap agar ada banyak flow. FAR dari ribuan
+  flow jauh lebih kredibel daripada dari puluhan. Gunakan skrip pembangkit benign siap-pakai
+  di **Target** (jalankan di background sebelum/berbarengan capture, hentikan saat tahap selesai):
+  ```bash
+  cd /opt/unsw/scripts
+  # TARGET_IP=127.0.0.1 (loopback) atau IP privat Target agar lewat ens5
+  nohup sudo TARGET_IP=127.0.0.1 ./benign_traffic.sh > /opt/unsw/benign.log 2>&1 &
+  # ... jalankan capture tahap (S0/D1/D2/D3) ...
+  sudo pkill -f benign_traffic.sh   # stop setelah capture tahap selesai
+  ```
+  Skrip menghasilkan flow beragam (HTTP lokal + publik via NAT, DNS, unduhan kecil). Sesi
+  SSH sah OFF secara default (agar tak menyerupai pola gagal-login/brute-force); aktifkan
+  hanya bila kredensial valid tersedia (`BENIGN_SSH=1 SSH_USER=... SSH_PASS=...`).
+
+### Helper capture berdurasi tetap (tahap pendek S0-S3)
+`capture_target.sh far` memakai rotasi per JAM (`-G 3600`) — cocok untuk S4. Untuk tahap
+pendek, capture satu file berdurasi tetap di **Target+Analyzer** (mesin gabungan) dengan `timeout` (IFACE auto dari
+default route, TIDAK `-i any`):
+```bash
+IFACE=$(ip -o -4 route show to default | awk '{print $5}' | head -1); [ -z "$IFACE" ] && IFACE=ens5
+echo "IFACE=$IFACE"   # catat untuk transparansi paper
+sudo timeout <DETIK> tcpdump -i "$IFACE" -w /opt/unsw/captures/ramp_<TAHAP>.pcap
+```
+Lalu proses langsung di mesin yang sama (capture + inferensi satu host):
+```bash
+export S3_BUCKET=ssh-detection-features-232032302717
+python3 /opt/unsw/scripts/unsw_extract_infer.py far /opt/unsw/captures/ramp_<TAHAP>.pcap
+# (opsional) backup pcap ke S3
+aws s3 cp /opt/unsw/captures/ramp_<TAHAP>.pcap s3://$S3_BUCKET/unsw-far/captures/ --region ap-southeast-1
+```
+
+---
+
+### S0 — Smoke (~3 menit) | GATE saja (tidak dilaporkan) | tangkap error mendasar & bug satuan
+- **Capture:** `timeout 180 tcpdump -i $IFACE ... ramp_s0.pcap` (180 detik), trafik benign aktif.
+- **Proses:** `unsw_extract_infer.py far ramp_s0.pcap`.
+- **GATE S0:**
+  - **S0-a** NFStream menghasilkan **>0 flow** (jika 0 -> hampir pasti `-i any`/SLL, atau IFACE salah).
+  - **S0-b** pipeline extract+infer selesai **tanpa error** (`far_log.jsonl` bertambah 1 baris).
+  - **S0-c** **sanity `duration` (MIKRODETIK):** fitur `duration` (di `ramp_s0_flows.csv`) harus berskala **mikrodetik** — flow beberapa detik ~ orde `1e6`-`1e7` us (mis. 10 s = 1e7). BUKAN nilai kecil <~1000 (tanda masih detik/ms; scaler CIC mengharapkan us). Bandingkan juga dengan `scaler_mean[duration]` (~1,2e7) di `deploy_meta_9feat.json` — orde harus sebanding.
+- **Cek cepat S0-c (Analyzer):**
+  ```bash
+  python3 - <<'PY'
+  import pandas as pd, json
+  d = pd.read_csv('/opt/unsw/results/ramp_s0_flows.csv')
+  meta = json.load(open('/opt/unsw/models/deploy_meta_9feat.json'))
+  print('n_flow=', len(d))
+  print(d['duration'].describe())          # orde 1e6-1e7 us untuk flow beberapa detik
+  print('scaler_mean[duration]=', meta['scaler_mean'][0])  # ~1.2e7 (referensi orde)
+  PY
+  ```
+- **STOP bila:** flow=0, ada error, atau `duration` berorde jauh dari `scaler_mean[duration]` (mis. masih detik/ms). Diagnosa (IFACE? skrip versi lama yang masih pakai `dur_ms/1000` detik alih-alih `dur_feat_us`? model/meta?) lalu ulang S0.
+
+### D1 — 1 jam | titik perbandingan FAR #1 + GATE satuan/scaler
+- **Capture (1 file 1 jam):** `sudo timeout 3600 tcpdump -i "$IFACE" -w /opt/unsw/captures/far_%Y%m%d_%H.pcap` (trafik benign aktif). Proses mode `far`.
+- **GATE D1 (wajib lolos sebelum naik ke D2):**
+  - **D1-a** FAR **masuk akal**: `0 <= FAR < 1` dan **tidak = 1** (FAR=1 -> hampir pasti mismatch skala/scaler, bukan model buruk).
+  - **D1-b** **z-of-mean tiap fitur** terhadap `scaler_mean`/`scaler_scale` training tidak ekstrem: **|z| <= ~6** untuk semua 9 fitur.
+  - **D1-c** volume flow benign tercatat (jadi baris pertama tabel perbandingan §7.2).
+- **Cek D1-b (Analyzer):**
+  ```bash
+  python3 - <<'PY'
+  import json, numpy as np, pandas as pd, glob, os
+  meta = json.load(open('/opt/unsw/models/deploy_meta_9feat.json'))
+  mean = np.array(meta['scaler_mean']); scale = np.array(meta['scaler_scale'])
+  CANON = ["duration","fwd_pkts","bwd_pkts","fwd_bytes","bwd_bytes","fwd_mean","bwd_mean","src_load","dst_load"]
+  f = sorted(glob.glob('/opt/unsw/results/far_*_flows.csv'), key=os.path.getmtime)[-1]
+  d = pd.read_csv(f)[CANON]
+  z = (d.mean().values - mean) / scale
+  for c,zz in zip(CANON, z):
+      print(f'{c:10s} z_of_mean={zz:+.2f}' + ('  <-- CEK' if abs(zz)>6 else ''))
+  PY
+  ```
+- **STOP bila:** FAR=1/absurd, atau ada fitur |z|>~6. Perbaiki satuan/scaler/mapping lalu ulang D1.
+- **Catat:** FAR + n_flow D1 -> baris "1 jam" Tabel §7.2.
+
+### D2 — 6 jam | titik perbandingan FAR #2 + rotasi/upload + stabilitas antar-jam
+- **Capture rotasi per jam (6 file):**
+  ```bash
+  sudo timeout 21600 tcpdump -i "$IFACE" -G 3600 -w /opt/unsw/captures/far_%Y%m%d_%H.pcap
+  ```
+- Proses tiap file (mode `far`); (opsional) backup pcap ke S3.
+- **GATE D2:**
+  - **D2-a** setiap pcap rotasi **ter-upload** & **terproses** tanpa error (baris bertambah di `far_log.jsonl` per file).
+  - **D2-b** FAR **stabil antar-jam** (tak ada jam yang meledak; variasi dalam batas wajar) dan **konsisten dengan D1** (selisih dalam beberapa poin persen).
+  - **D2-c** total flow benign terkumpul cukup (target kerja: ribuan flow).
+- **STOP bila:** ada file gagal upload/proses, FAR meloncat tak wajar, atau volume flow terlalu sedikit (naikkan intensitas trafik benign, ulang).
+- **Catat:** FAR agregat 6 jam + FAR min-max per jam + n_flow -> baris "6 jam" Tabel §7.2.
+
+### D3 — 24 jam | titik perbandingan FAR #3 (satu siklus harian) — eksekusi utama layak paper
+- **Capture:** `capture_target.sh far` (rotasi per jam, `-G 3600`) selama ~24 jam, trafik benign aktif sepanjang waktu (siang & malam).
+- **Proses per jam** tiap `far_YYYYMMDD_HH.pcap` (mode `far`).
+- **GATE D3:**
+  - **D3-a** FAR dihitung **per jam** dan **agregat 24 jam** dari `far_log.jsonl` (angka nyata).
+  - **D3-b** total flow benign **besar** (layak paper).
+  - **D3-c** **seluruh hasil ter-upload** ke `.../unsw-far/results/` **sebelum teardown**.
+- **STOP bila D3-c:** ada hasil belum ter-upload -> tunda teardown sampai lengkap.
+- **Catat:** FAR agregat 24 jam + FAR min-max per jam + n_flow -> baris "24 jam" Tabel §7.2.
+
+### D4 / D5 — 3 hari / 7 hari | eskalasi (opsional, variasi weekday/weekend)
+- Infra & prosedur **sama persis** dengan D3, hanya durasi capture diperpanjang (rotasi per jam berjalan 72 / 168 jam). Jalankan HANYA setelah D3 kredibel (atau bila diminta reviewer).
+- **Kontrol biaya WAJIB:** deployment berhari-hari mahal — pantau AWS Budgets, cek EIP idle, pertimbangkan jadwal on/off malam bila trafik benign masih representatif. Rujuk `cost-estimate.md`.
+- **GATE D4/D5:** FAR dihitung **per hari** (bandingkan antar-hari, cek weekday vs weekend) + agregat total; semua hasil ter-upload sebelum teardown.
+- **Catat:** FAR agregat per durasi -> baris "3 hari" / "7 hari" Tabel §7.2.
+
+> **Kontrol biaya antar tahap:** bila ada jeda panjang antar tahap, stop instance
+> (§5) untuk hemat; resume saat lanjut. Teardown penuh (§6) hanya setelah tahap terakhir
+> yang direncanakan selesai & semua hasil di S3. Rujuk `cost-estimate.md` untuk ambang AWS
+> Budgets & cek EIP idle.
+
+---
+## 4. FASE 2 — Deteksi (DENGAN serangan, ~7 menit)
+
+Di **Target+Analyzer** (mesin gabungan): mulai capture deteksi.
+```bash
+cd /opt/unsw/scripts && sudo ./capture_target.sh detect clean   # atau: evasion
+```
+Di **Attacker**: jalankan skenario.
+```bash
+cd /opt/unsw/scripts && ./attack_scenario.sh <TARGET_PRIVATE_IP> clean   # atau: evasion
+```
+Setelah selesai (~7 menit), hentikan capture (Ctrl-C). Proses langsung di mesin yang
+sama (opsional backup pcap ke S3):
+```bash
+python3 /opt/unsw/scripts/unsw_extract_infer.py detect /opt/unsw/captures/detect_clean.pcap
+```
+Metrik → `/opt/unsw/results/detect_clean_metrics.json`. Ulangi untuk `evasion`.
+
+---
+
+## 5. Idle / Resume (hemat biaya tanpa hapus)
+
+Idle (stop compute, biaya ~nol kecuali EBS kecil):
+```bash
+aws ec2 stop-instances --region ap-southeast-1 --instance-ids <AttackerId> <TargetAnalyzerId>
+```
+Resume:
+```bash
+aws ec2 start-instances --region ap-southeast-1 --instance-ids <AttackerId> <TargetAnalyzerId>
+# tunggu SSM online ~2 menit; private IP tetap
+```
+
+---
+
+## 6. SELESAI — Simpan hasil, HAPUS infra (biaya nol)
+
+```bash
+# 1) Pastikan semua hasil sudah di S3
+aws s3 ls s3://ssh-detection-features-232032302717/unsw-far/results/
+# 2) Hapus stack EC2 DULU (harus sebelum VPC karena ImportValue), lalu stack VPC
+aws cloudformation delete-stack --stack-name unsw-far-ec2 --region ap-southeast-1
+aws cloudformation wait stack-delete-complete --stack-name unsw-far-ec2 --region ap-southeast-1
+aws cloudformation delete-stack --stack-name unsw-far-vpc --region ap-southeast-1
+aws cloudformation wait stack-delete-complete --stack-name unsw-far-vpc --region ap-southeast-1
+# 3) Verifikasi tak ada EIP nyangkut
+aws ec2 describe-addresses --region ap-southeast-1
+```
+
+---
+
+## 7. Slot Hasil Nyata (diisi setelah eksekusi — JANGAN dikarang)
+
+### 7.1 Profil efisiensi (Tabel §3.4 naskah)
+| Metrik | Nilai |
+|---|---|
+| Ukuran model biner (Model A, 9 fitur) | _(diisi)_ KB |
+| Latensi inferensi per flow @1 vCPU | _(diisi)_ µs |
+| Throughput | _(diisi)_ flow/detik |
+
+### 7.2 FAR (Fase 1, §12 naskah) — PERBANDINGAN ANTAR-DURASI (percobaan bertahap)
+
+**Tabel utama — FAR per durasi observasi** (satu baris per tahap D1-D5; isi angka nyata):
+| Durasi | Total n_flow benign | Total false_alarm | FAR agregat | FAR per-jam min-max |
+|---|---|---|---|---|
+| 1 jam (D1)  | 3687 | 14 | 0,3797% | 0,3797% (1 jam) |
+| 6 jam (D2)  | 22644 | 94 | 0,4152% | 0,363%–0,481% (per jam) |
+| 24 jam (D3) | | | | |
+| 3 hari (D4) *(opsional)* | | | | |
+| 7 hari (D5) *(opsional)* | | | | |
+
+**Tabel rinci per jam (D3, satu siklus harian)** — untuk melihat pola siang/malam:
+| Jam ke- | n_flow | false_alarm | FAR |
+|---|---|---|---|
+| _(diisi per jam dari far_log.jsonl)_ | | | |
+| **Agregat 24 jam** | | | |
+
+Catatan jujur: laporkan durasi apa adanya per tahap. **Interpretasi yang diharapkan:** FAR
+agregat **stabil/rendah dan konsisten** lintas durasi (1j -> 6j -> 24j -> ...) membuktikan
+FAR bukan artefak snapshot pendek. Bila ada durasi dengan FAR menyimpang, laporkan & analisis
+(mis. lonjakan trafik anomali benign, bukan disembunyikan).
+
+### 7.3 Deteksi (Fase 2)
+| Varian | MCC | F1 | Precision | Recall | n_flow | Catatan |
+|---|---|---|---|---|---|---|
+| clean (brute+slowloris+SYN200/s) | 0,0265 | 0,006 | 1,000 | 0,003 | 434 | model TAK mengenali (recall~0) |
+| volumetric (SYN5000/s+HTTP flood+UDP) | 0,0007 | 0,0006 | 1,000 | 0,0003 | 17319 | tetap TAK terdeteksi (lihat diagnosa) |
+| evasion | _(dilewati)_ | | | | | tak berguna bila clean sudah recall~0 |
+
+**TEMUAN PENTING Fase 2 (2026-09-09) — model UNSW TIDAK mendeteksi serangan nyata AWS:**
+Dua varian diuji, keduanya recall ~0:
+- `clean` (brute + slowloris + SYN 200/s): 434 flow, MCC 0,027, recall 0,003.
+- `volumetric` (SYN 5000/s + HTTP flood + UDP flood): pcap 305 MB, 17.319 flow, MCC 0,0007, recall 0,0003.
+
+**Diagnosa (bukan feature mismatch/satuan — SFM & unit OK):** z-score fitur wajar; banyak fitur
+(fwd_bytes, fwd_mean, bwd_mean) SUDAH cocok dgn train. Yang meleset FUNDAMENTAL: **`src_load`
+& `dst_load`** (laju byte/paket per-detik). Flow AWS berdurasi **panjang** (`duration` median
+~64 detik pd volumetric) → laju = bytes/durasi jadi RENDAH (`src_load` med 15,6 vs train 2,5e5;
+`dst_load` med 0,12 vs train 1,5e4). Serangan DoS UNSW = flow **PENDEK, laju TINGGI**. Memperbesar
+volume serangan TIDAK menutup gap ini karena akarnya **karakteristik durasi/laju flow** (distribution
+shift), bukan volume. prob_attack naik sedikit (clean mean 0,048 → volumetric 0,113; max 0,877) tapi
+tetap < ambang 0,5.
+
+**Makna untuk paper (mendukung tesis):** keunggulan benchmark TIDAK otomatis mentransfer ke trafik
+nyata karena distribution shift pada distribusi fitur serangan. Solusi yang selaras paper = **kalibrasi
+domain (few-shot 1% / mixup)** memakai sampel domain AWS — BUKAN mengubah serangan. Ini konsisten
+dgn temuan offline (baseline single-source runtuh; few-shot memulihkan).
+
+**Opsi lanjut (belum diputuskan):** (a) laporkan apa adanya sebagai bukti distribution shift di AWS;
+(b) kalibrasi few-shot dgn sampel AWS lalu uji ulang pcap yang sama; (c) atur timeout NFStream
+(`active_timeout`/`idle_timeout` pendek) agar flow terpecah pendek → laju naik, lihat efeknya.
+
+### 7.4 Catatan lingkungan (transparansi)
+- Interface capture (mesin Target+Analyzer): **ens5** | Instance types: **t3.medium**
+- Temuan z-of-mean real vs train: Fase 1 |z|<=1,22 (fitur cocok). Fase 2 clean: fitur cocok kecuali
+  `src_load`/`dst_load` sangat rendah (serangan lambat) → alasan recall~0.
+- AMI: Amazon Linux 2023; AWS CLI v1 bawaan rusak → dipakai CLI v2 (Target & Attacker).
+
+---
+
+## 8. Referensi ID (diisi saat deploy, agar resume cepat)
+- Stack VPC: `unsw-far-vpc` | Stack EC2: `unsw-far-ec2` | VPC: _(id)_ | Bucket: _(nama)_
+- Attacker: _(id / privIP 10.5.2.x)_ | Target+Analyzer: _(id / privIP 10.5.2.x)_  (keduanya PRIVATE)
+- S3 layout: `models/`, `scripts/`, `captures/`, `results/` di prefix `unsw-far/`.
+
+---
+
+## 9. STATUS SESI TERAKHIR (catatan resume — diperbarui manual)
+
+> Ringkasan posisi terakhir agar sesi berikutnya langsung paham tanpa mengandalkan
+> ingatan chat. Perbarui bagian ini setiap akhir sesi kerja AWS.
+
+### Tanggal: 2026-09-09 (deploy ulang + S0 smoke LOLOS)
+
+**Kondisi AWS:** Infra AKTIF (deploy ulang berhasil di region ap-southeast-1).
+- Stack `unsw-far-vpc` = CREATE_COMPLETE; stack `unsw-far-ec2` = CREATE_COMPLETE.
+- **Attacker** `i-066818d68e6ae6506` (privIP 10.5.2.138) — **di-STOP** (Fase 1 tak pakai Attacker).
+- **Target+Analyzer** `i-098defb1359d5ab54` (privIP 10.5.2.62) — RUNNING, SSM Online.
+- Kondisi awal sesi ini bersih (0 stack, 0 EIP). Akun 232032302717 user IAM `hero`.
+
+**AMI:** Amazon Linux 2023 (AL2023) x86_64, dari SSM param
+`/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64` (kedua EC2).
+
+**Yang sudah beres di Target+Analyzer:**
+- **AWS CLI v2 terpasang** (`aws-cli/2.36.41` di `/usr/local/bin/aws`) — WAJIB, karena CLI v1
+  bawaan rusak (lihat "BUG AWS CLI v1 RUSAK" di atas). Ini fix penting sesi ini.
+- Skrip + model terunduh via CLI v2 (path LITERAL) ke `/opt/unsw/scripts` (4 file) &
+  `/opt/unsw/models` (`modelA_9feat.json` 3MB, `deploy_meta_9feat.json`). `grep dur_feat_us`
+  MUNCUL (baris 47,50) — satuan sudah ter-FIX.
+- Lingkungan runtime OK: tcpdump 4.99.1, python3.9 + nfstream 6.6.0 / xgboost 2.1.4 /
+  pandas 2.3.3 / numpy 2.0.2. IFACE = `ens5`. sshd & nginx `active`.
+
+**S0 smoke (~3 menit) — LOLOS SEMUA GATE:**
+- 203 flow (S0-a flow>0 ✓), pipeline tanpa error + auto-upload S3 (S0-b ✓).
+- `duration` mikrodetik: mean 1.64e6, max 1.62e8 us vs `scaler_mean[duration]`=1.22e7 → orde
+  sebanding (S0-c ✓). FAR=0.0000% (203 flow benign), latensi 52.0 us/flow (single-thread).
+- Hasil ter-upload ke `s3://ssh-detection-features-232032302717/unsw-far/results/`
+  (`ramp_s0_flows.csv`, `far_log.jsonl`).
+
+**D1 (1 jam) — SELESAI, SEMUA GATE LOLOS (2026-09-09 00:21 UTC):**
+- pcap `far_20260908_23.pcap` 19,1 MB; **3687 flow** benign; **14 false alarm**; **FAR=0,3797%**.
+- Gate D1-a (0<=FAR<1, FAR!=1) ✓; D1-b **MAX_ABS_Z=1,22** (semua fitur |z|<=6, terbesar
+  bwd_mean +1,22) ✓; D1-c n_flow=3687 ✓. Latensi 8,7 us/flow, throughput ~115k fps.
+- Hasil ter-upload ke S3 results/. Baris "1 jam" Tabel §7.2 sudah diisi.
+
+**BUG CAPTURE (ditemukan 2026-09-09, sudah difix): tcpdump "Permission denied" saat
+tulis ke subfolder baru milik root.** tcpdump dijalankan `sudo` lalu **drop-privilege ke
+user `tcpdump`**; bila `-w` menunjuk subfolder yang baru dibuat sebagai root
+(mis. `/opt/unsw/captures/d2/`), user `tcpdump` TAK bisa menulis → tcpdump exit seketika,
+`timeout ... || true` menelan error, dan capture "selesai" dalam hitungan detik (pcap 0).
+**Fix:** tulis pcap ke `/opt/unsw/captures/` langsung (folder terbukti writable di D1) dengan
+prefix pembeda (mis. `d2_%Y%m%d_%H%M%S.pcap`), atau `sudo chmod 1777 /opt/unsw/captures`.
+Selalu VERIFIKASI pcap benar-benar tumbuh (~20 dtk setelah start: `ls -la` ukuran > 0 &
+tcpdump log berisi `listening on ens5`, bukan `Permission denied`).
+
+**D2 (6 jam) — SELESAI, SEMUA GATE LOLOS (DONE 2026-09-09 07:24 UTC):** 6 pcap rotasi per jam
+(`d2_*.pcap`), semua terproses + terupload. **Agregat: 22.644 flow, 94 false alarm, FAR=0,4152%**;
+per-jam **0,363%–0,481%** (sangat stabil). Gate D2-a (6/6 pcap proses+upload) ✓; D2-b (FAR stabil
+antar-jam & konsisten D1 0,38%) ✓; D2-c (22.644 flow) ✓. Latensi ~8,6 us/flow. Proses berhenti bersih.
+Lalu **D3 (24 jam)** — tahap terakhir Fase 1.
+
+**KEPUTUSAN RUANG LINGKUP (2026-09-09):** Fase 1 dihentikan di **D3 (24 jam)** — cukup kredibel
+(satu siklus harian penuh, layak paper). **D4 (3 hari) & D5 (7 hari) DILEWATI** sementara
+(opsional, hanya bila reviewer minta). Estimasi biaya total S0->D3 < ~$5. Infra Fase 1 aktual:
+**1 EC2 t3.medium (Target+Analyzer) + NAT** (~$3/hari); Attacker di-stop. NAT penyumbang biaya
+utama & tetap kena biaya walau instance di-stop -> untuk jeda panjang, teardown stack.
+
+### Tanggal: 2026-09-09 (sesi lanjut — Fase 2 dijalankan, lalu TEARDOWN)
+
+**Yang dikerjakan:** D2 (6 jam) selesai (FAR 0,4152%, gate lolos, Tabel §7.2 terisi). **D3 (24 jam)
+BELUM dijalankan** (dilewati sesi ini; bisa dilanjut kapan saja, infra sama). Langsung ke **Fase 2
+(deteksi)** memakai Attacker + Target.
+
+**HASIL FASE 2 (lihat §7.3):** model UNSW **TIDAK mendeteksi** serangan AWS. clean MCC 0,027 R 0,003;
+volumetric MCC 0,0007 R 0,0003. Diagnosa: **distribution shift** pada `src_load`/`dst_load` — flow AWS
+durasi panjang (~64 dtk) → laju rendah; serangan UNSW = flow pendek laju tinggi. Volume TIDAK menutup
+gap. Bukan feature mismatch (z wajar, SFM/satuan OK). Ini justru mendukung tesis paper (perlu kalibrasi
+domain few-shot, bukan ubah serangan). Ditambahkan varian `volumetric` di `attack_scenario.sh` (SYN
+5000/s + HTTP flood + UDP flood).
+
+**DATA AWS AMAN DI S3** (`unsw-far/results/`): CSV 9-fitur berlabel semua tahap — `ramp_s0_flows`,
+`far_20260908_23_flows` (D1), 6× `d2_*_flows` (D2), `detect_clean_flows`, `detect_volumetric_flows`,
++ metrics.json + `far_log.jsonl`. Cukup untuk analisis/few-shot offline (pcap mentah tak perlu).
+
+**TEARDOWN (2026-09-09):** kedua EC2 di-stop lalu **stack `unsw-far-ec2` & `unsw-far-vpc` DIHAPUS**
+(termasuk NAT) → biaya nol. Bucket S3 tetap (hasil aman). Deploy ulang: `unsw-vpc.yaml` lalu
+`unsw-2ec2.yaml` (private IP akan berubah; skrip+model tinggal tarik ulang dari S3, ingat pakai
+AWS CLI v2). TODO resume: cek EIP idle & EBS `available` nyangkut.
+
+**IDE LANJUTAN (diskusi, belum diputuskan):** buat "dataset AWS" dari CSV flow AWS yg sudah ada,
+lalu **few-shot**: latih `UNSW + X% AWS`, uji sisa AWS → harap recall pulih (bukti tesis end-to-end
+di trafik nyata). Latih di SageMaker (ambil CSV dari S3). Opsi lain: set NFStream active/idle_timeout
+pendek agar flow terpecah → `src_load` naik, uji sensitivitasnya.
+
+---
+
+### Tanggal: 2026-09-08 (teardown penuh)
+
+**Kondisi AWS:** SEMUA stack CloudFormation sudah dihapus (`ACTIVE_STACKS=0` di
+region ap-southeast-1). Tidak ada biaya EC2/NAT berjalan. Stack yang pernah dibuat &
+sudah dihapus di sesi ini: `unsw-far-vpc`, `unsw-far-ec2`, `rw-backup-*`, `ransomware-*`,
+`security-lab-*`, `nids01-*`.
+
+**Belum diperiksa (TODO sesi berikutnya):** Elastic IP idle & EBS volume `available`
+yang mungkin nyangkut (biaya kecil) — cek via Console: EC2 -> Elastic IPs & Volumes.
+
+**Progres T10 (deploy pernah BERHASIL lalu di-teardown):**
+- Model + meta + 4 skrip sudah ada di S3 (`s3://ssh-detection-features-232032302717/unsw-far/`).
+  Model & meta dari notebook 09; skrip dari `upload_to_s3.sh`. TIDAK perlu upload ulang.
+- Template `unsw-vpc.yaml` + `unsw-2ec2.yaml` sudah DIPERBAIKI & tervalidasi:
+  1. BOM UTF-8 dihapus (dulu bikin error `[???AWSTemplateFormatVersion]`).
+  2. Deskripsi SG rule: karakter `->` diganti `ke` (AWS tolak `>` di description).
+  Deploy ulang berikutnya harusnya mulus. **Belum di-commit ke Git** (per 2026-09-08).
+- Fix satuan `duration` di `unsw_extract_infer.py` sudah benar: `dur_feat_us = dur_ms*1000`
+  (mikrodetik, samakan scaler CIC yang `scaler_mean[duration]`~1.2e7). Pembagi laju tetap
+  detik (`dur_s`). Gate `dur_feat_us` dipakai di `upload_to_s3.sh` & S0-c.
+
+**BUG yang HARUS diperbaiki saat deploy ulang (belum difix):** saat download skrip/model
+ke Target via `ssm send-command`, JANGAN pakai variabel `$S3_BUCKET` di dalam array
+`commands` (tidak ter-expand -> folder kosong, `s3 cp` diam-diam gagal). Pakai path S3
+**LITERAL**:
+```bash
+aws s3 cp s3://ssh-detection-features-232032302717/unsw-far/scripts/ /opt/unsw/scripts/ --recursive
+aws s3 cp s3://ssh-detection-features-232032302717/unsw-far/models/  /opt/unsw/models/  --recursive
+```
+
+**BUG AWS CLI v1 RUSAK di AMI AL2023 (ditemukan 2026-09-09, WAJIB fix tiap deploy baru):**
+`aws` bawaan (`/usr/bin/aws`, AWS CLI v1 berbasis Python 3.9) di instance GAGAL dengan
+`ModuleNotFoundError: No module named 'dateutil'`. Akibatnya `aws s3 cp` diam-diam gagal &
+folder `/opt/unsw/scripts` + `models` tetap KOSONG (Status SSM tetap "Success" — menipu!).
+Penyebab BUKAN dateutil hilang (paket `python3-dateutil` ADA via dnf 2.8.1 & pip 2.9.0);
+masalahnya **konflik jalur Python** `/usr/lib` vs `/usr/local/lib` yang bikin CLI v1 tak
+menemukan modulnya. **Solusi bersih & andal:** pasang **AWS CLI v2 resmi** (self-contained,
+tak tergantung Python sistem) lalu pakai `/usr/local/bin/aws`:
+```bash
+sudo dnf install -y unzip
+curl -s 'https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip' -o /tmp/awscliv2.zip
+cd /tmp && unzip -oq awscliv2.zip && sudo ./aws/install --update
+hash -r; aws --version   # harus aws-cli/2.x
+```
+Lalu ulangi download skrip+model dengan `sudo /usr/local/bin/aws s3 cp ...` (path LITERAL).
+> Tip SSM: kirim command via `--parameters file://payload.json` (bukan inline) untuk hindari
+> masalah escaping PowerShell; sertakan `executionTimeout` untuk langkah lama (capture).
+
+**Langkah lanjut T10 (saat mau eksekusi lagi):**
+1. Deploy `unsw-vpc.yaml` -> tunggu CREATE_COMPLETE -> deploy `unsw-2ec2.yaml`.
+2. Ambil Outputs (instance id + private IP target).
+3. Via SSM: download skrip+model (path LITERAL) ke Target; `grep dur_feat_us` harus muncul.
+4. S0 smoke (~3 menit): cek `duration` orde ~1e6-1e7 us (sanity S0-c).
+5. Lolos -> D1 (1 jam) -> gate |z|<=6 & FAR!=1 -> D2 (6j) -> D3 (24j) -> [D4 3h / D5 7h].
+6. Isi hasil ke Tabel §7.2 (perbandingan FAR antar-durasi) lalu ke Tabel FAR naskah.
+
+**Catatan lingkungan kerja:** terminal PowerShell di mesin lokal sering menelan stdout
+perintah panjang (kosmetik). Trik andal: tulis output ke file lalu baca file, atau pakai
+perintah pendek `describe-stacks ... --output text`. AWS CLI di lokal pakai user IAM `hero`
+(akun 232032302717) — punya izin CloudFormation/EC2/SSM. Terminal SageMaker TIDAK punya
+izin itu (execution role hanya S3/SageMaker) -> jalankan CloudFormation dari lokal.
+
+---
+
+## 10. RE-RUN Fase 2 untuk MULTI-CLASS (panduan lengkap, ~7 menit sesi)
+
+> **Tujuan:** menghasilkan **`multiclass_aws_results.json`** yang berisi angka (bukan `zero_shot:null`),
+> sehingga Bagian §8b notebook `20_rangkuman.ipynb` tampil penuh (confusion matrix 4-kelas AWS).
+> **Kunci:** skrip `unsw_extract_infer.py` versi ter-update menyimpan kolom **`gt_category`** +
+> **`elapsed_sec`** (dari `first_seen`), sehingga kategori (Benign/BruteForce/DoS/DDoS) akurat —
+> BUKAN ditebak dari urutan baris CSV.
+
+### 10.0 Prasyarat (SUDAH beres bila skrip sudah di-upload)
+- [x] `unsw_extract_infer.py` ter-update **sudah di S3** `unsw-far/scripts/` (dikonfirmasi).
+      Verifikasi isi: `grep -n "gt_category" unsw_extract_infer.py` harus muncul (juga `dur_feat_us`).
+- Timeline serangan varian `clean` (dari `attack_scenario.sh`, dipakai `GT_CAT`):
+  `0-1 Benign | 1-3 BruteForce(SSH) | 3-5 DoS(Slowloris) | 5-6 DDoS(SYN flood) | 6-7 Benign`.
+
+### 10.1 Deploy ulang (dari LOKAL, region ap-southeast-1)
+```bash
+aws cloudformation create-stack --stack-name unsw-far-vpc \
+  --template-body file://unsw-vpc.yaml --capabilities CAPABILITY_NAMED_IAM --region ap-southeast-1
+aws cloudformation wait stack-create-complete --stack-name unsw-far-vpc --region ap-southeast-1
+aws cloudformation create-stack --stack-name unsw-far-ec2 \
+  --template-body file://unsw-2ec2.yaml --capabilities CAPABILITY_NAMED_IAM --region ap-southeast-1
+aws cloudformation wait stack-create-complete --stack-name unsw-far-ec2 --region ap-southeast-1
+aws cloudformation describe-stacks --stack-name unsw-far-ec2 --region ap-southeast-1 \
+  --query "Stacks[0].Outputs" --output table
+```
+Catat: `AttackerId`, `TargetAnalyzerId`, `AttackerPrivateIp`, `TargetAnalyzerPrivateIp`.
+Tunggu SSM online (~2 menit): `aws ssm describe-instance-information --region ap-southeast-1 --query "InstanceInformationList[].{Id:InstanceId,Ping:PingStatus}" --output table`.
+
+### 10.2 Siapkan Target+Analyzer (via SSM) — WAJIB CLI v2
+```bash
+# 1) Pasang AWS CLI v2 (CLI v1 bawaan AL2023 RUSAK: ModuleNotFoundError dateutil)
+sudo dnf install -y unzip
+curl -s 'https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip' -o /tmp/awscliv2.zip
+cd /tmp && unzip -oq awscliv2.zip && sudo ./aws/install --update
+hash -r; aws --version   # harus aws-cli/2.x
+# 2) Tarik skrip+model — PATH LITERAL (jangan $S3_BUCKET di dalam array commands SSM)
+sudo /usr/local/bin/aws s3 cp s3://ssh-detection-features-232032302717/unsw-far/scripts/ /opt/unsw/scripts/ --recursive
+sudo /usr/local/bin/aws s3 cp s3://ssh-detection-features-232032302717/unsw-far/models/  /opt/unsw/models/  --recursive
+chmod +x /opt/unsw/scripts/*.sh
+grep -n "gt_category" /opt/unsw/scripts/unsw_extract_infer.py   # HARUS muncul (versi ter-update)
+grep -n "dur_feat_us" /opt/unsw/scripts/unsw_extract_infer.py   # HARUS muncul (satuan us)
+```
+
+### 10.3 Jalankan Fase 2 (deteksi, ~7 menit)
+```bash
+# Di TARGET+ANALYZER: mulai capture (pcap ke folder yg terbukti writable, cek bug tcpdump)
+cd /opt/unsw/scripts && sudo ./capture_target.sh detect clean
+#   -> VERIFIKASI ~20 dtk: `ls -la /opt/unsw/captures` ukuran > 0 & log 'listening on ens5'
+#      (BUKAN 'Permission denied'). Bila 0: tulis ke /opt/unsw/captures/ langsung / chmod 1777.
+
+# Di ATTACKER: jalankan skenario terjadwal (pakai TargetAnalyzerPrivateIp)
+cd /opt/unsw/scripts && ./attack_scenario.sh <TARGET_PRIVATE_IP> clean
+```
+Setelah ~7 menit selesai, hentikan capture (Ctrl-C di Target).
+
+### 10.4 Proses -> CSV ber-`gt_category` (auto-upload S3)
+```bash
+export S3_BUCKET=ssh-detection-features-232032302717
+python3 /opt/unsw/scripts/unsw_extract_infer.py detect /opt/unsw/captures/detect_clean.pcap
+# VERIFIKASI kolom baru ada:
+head -1 /opt/unsw/results/detect_clean_flows.csv   # harus memuat: ...,ground_truth,elapsed_sec,gt_category
+# distribusi kategori (harus ada Benign/BruteForce/DoS/DDoS, bukan cuma 0/1):
+python3 -c "import pandas as pd; d=pd.read_csv('/opt/unsw/results/detect_clean_flows.csv'); print(d['gt_category'].value_counts())"
+```
+
+### 10.5 Hitung multi-class (di SageMaker) + rerun rangkuman
+```bash
+# Di SageMaker: unduh CSV baru dari S3 lalu jalankan notebook 25
+aws s3 cp s3://ssh-detection-features-232032302717/unsw-far/results/detect_clean_flows.csv unswnb-15/notebooks/
+# Run All 25_multiclass_aws.ipynb  -> multiclass_aws_out/multiclass_aws_results.json (zero_shot TERISI)
+# Unduh hasil ke folder induk agar dibaca notebook 20:
+aws s3 cp s3://ssh-detection-features-232032302717/unsw-far/multiclass_aws/multiclass_aws_results.json unswnb-15/
+# Run All 20_rangkuman.ipynb -> Bagian 8b kini tampil confusion matrix 4-kelas AWS.
+```
+
+### 10.6 Teardown (biaya nol)
+```bash
+aws cloudformation delete-stack --stack-name unsw-far-ec2 --region ap-southeast-1
+aws cloudformation wait stack-delete-complete --stack-name unsw-far-ec2 --region ap-southeast-1
+aws cloudformation delete-stack --stack-name unsw-far-vpc --region ap-southeast-1
+aws cloudformation wait stack-delete-complete --stack-name unsw-far-vpc --region ap-southeast-1
+aws ec2 describe-addresses --region ap-southeast-1   # cek EIP nyangkut
+```
+
+### 10.7 Ekspektasi hasil (jujur)
+- Zero-shot multi-class AWS **kemungkinan rendah** (recall per-kelas kecil) karena *distribution shift*
+  yang sama seperti biner — ini **hasil yang benar & jujur**, bukan kegagalan.
+- Yang dilaporkan: **confusion matrix 4-kelas** (serangan X salah jadi Y) + **kurva few-shot** (nb 25
+  punya bagian few-shot: tambah k% label AWS -> lihat pemulihan per-kategori).
+- Bila `25` tetap memberi `zero_shot:null`: cek `detect_clean_flows.csv` benar punya kolom
+  `gt_category` (berarti skrip lama masih terpakai -> ulangi 10.2 pull skrip).

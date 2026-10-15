@@ -1,0 +1,22 @@
+{
+  "generated": "2026-09-17T01:41:41.104694Z",
+  "features": [
+    "duration",
+    "fwd_pkts",
+    "bwd_pkts",
+    "fwd_bytes",
+    "bwd_bytes",
+    "fwd_mean",
+    "bwd_mean",
+    "src_load",
+    "dst_load"
+  ],
+  "classes": [
+    "Benign",
+    "BruteForce",
+    "DoS",
+    "DDoS"
+  ],
+  "zero_shot": null,
+  "few_shot": []
+}

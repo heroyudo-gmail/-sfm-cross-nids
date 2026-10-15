@@ -1,0 +1,14 @@
+cic,unsw,hyp,cic_median,unsw_median,cic_p99,unsw_p99,cic_max,unsw_max,ratio_median,ratio_p99,note,verdict
+Flow Duration,dur,kuat,20761.0,0.0016,118111423.8,45.35,119999999.0,60.0,13123261.694,2604250.071,,likely-different-feature
+Tot Fwd Pkts,spkts,kuat,2.0,2.0,30.0,234.0,220366.0,9616.0,1.0,0.128,,aligned
+Tot Bwd Pkts,dpkts,kuat,1.0,2.0,35.0,400.0,68863.0,10974.0,0.5,0.087,,scale-mismatch (perlu konversi/scaling)
+TotLen Fwd Pkts,sbytes,kuat,43.0,430.0,2305.0,74125.4,8737314.0,12965233.0,0.1,0.031,,scale-mismatch (perlu konversi/scaling)
+TotLen Bwd Pkts,dbytes,kuat,101.0,164.0,21627.6,474367.8,101000000.0,14655550.0,0.616,0.046,,scale-mismatch (perlu konversi/scaling)
+Fwd Pkt Len Mean,smean,kuat,36.0,73.0,194.38,1137.0,5907.58,1504.0,0.493,0.171,,aligned
+Bwd Pkt Len Mean,dmean,kuat,66.0,44.0,840.89,1252.0,1955.96,1458.0,1.5,0.672,,aligned
+Init Fwd Win Byts,swin,kuat,953.0,0.0,65535.0,255.0,65535.0,255.0,inf,257.0,,scale-mismatch (perlu konversi/scaling)
+Init Bwd Win Byts,dwin,kuat,-1.0,0.0,63684.4,255.0,65535.0,255.0,inf,249.743,,scale-mismatch (perlu konversi/scaling)
+Flow Byts/s,sload,kuat,787.5237,879674.75,1097599.82,800000000.0,1230000000.0,5988000256.0,0.001,0.001,,scale-mismatch (perlu konversi/scaling)
+Bwd Pkts/s,dload,kuat,3.6995,1447.0227,500000.0,14655893.6,2000000.0,22422730.0,0.003,0.034,,scale-mismatch (perlu konversi/scaling)
+Fwd IAT Mean,sinpkt,sedang,3544.0,0.2797,86200000.0,60000.66,120000000.0,84371.5,12669.224,1436.651,,likely-different-feature
+Bwd IAT Mean,dinpkt,sedang,0.0,0.006,10616659.93,441.65,120000000.0,56716.82,0.0,24038.466,,likely-different-feature

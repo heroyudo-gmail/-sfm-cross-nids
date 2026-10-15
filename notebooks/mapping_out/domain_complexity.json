@@ -1,0 +1,75 @@
+{
+  "per_feature": [
+    {
+      "fitur": "Flow Duration",
+      "var_cic": 1.1079,
+      "var_uns": 0.0,
+      "ent_cic": 4.6017,
+      "ent_uns": 2.3578
+    },
+    {
+      "fitur": "Tot Fwd Pkts",
+      "var_cic": 1.107,
+      "var_uns": 0.0091,
+      "ent_cic": 2.3442,
+      "ent_uns": 2.6528
+    },
+    {
+      "fitur": "Tot Bwd Pkts",
+      "var_cic": 1.0522,
+      "var_uns": 0.5104,
+      "ent_cic": 2.7143,
+      "ent_uns": 2.7455
+    },
+    {
+      "fitur": "TotLen Fwd Pkts",
+      "var_cic": 0.4699,
+      "var_uns": 5.8969,
+      "ent_cic": 3.0659,
+      "ent_uns": 3.4214
+    },
+    {
+      "fitur": "TotLen Bwd Pkts",
+      "var_cic": 1.0628,
+      "var_uns": 0.417,
+      "ent_cic": 2.953,
+      "ent_uns": 2.7814
+    },
+    {
+      "fitur": "Fwd Pkt Len Mean",
+      "var_cic": 0.4525,
+      "var_uns": 5.2277,
+      "ent_cic": 3.1402,
+      "ent_uns": 3.4854
+    },
+    {
+      "fitur": "Bwd Pkt Len Mean",
+      "var_cic": 0.8732,
+      "var_uns": 2.1701,
+      "ent_cic": 3.0974,
+      "ent_uns": 2.6939
+    },
+    {
+      "fitur": "Flow Byts/s",
+      "var_cic": 0.0032,
+      "var_uns": 9.001,
+      "ent_cic": 3.634,
+      "ent_uns": 3.8709
+    },
+    {
+      "fitur": "Bwd Pkts/s",
+      "var_cic": 0.0139,
+      "var_uns": 9.5003,
+      "ent_cic": 3.7442,
+      "ent_uns": 3.0557
+    }
+  ],
+  "summary": {
+    "mean_var_cic": 0.6825,
+    "mean_var_uns": 3.6369,
+    "mean_ent_cic": 3.255,
+    "mean_ent_uns": 3.0072
+  },
+  "n_cic": 1623261,
+  "n_uns": 175341
+}

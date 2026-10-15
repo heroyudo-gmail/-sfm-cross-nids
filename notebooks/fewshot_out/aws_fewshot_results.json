@@ -1,0 +1,185 @@
+{
+  "generated": "2026-09-10T02:06:43.892736Z",
+  "seed": 42,
+  "features": [
+    "duration",
+    "fwd_pkts",
+    "bwd_pkts",
+    "fwd_bytes",
+    "bwd_bytes",
+    "fwd_mean",
+    "bwd_mean",
+    "src_load",
+    "dst_load"
+  ],
+  "aws_total": {
+    "n": 17753,
+    "n_attack": 17620,
+    "n_benign": 133
+  },
+  "split": {
+    "train": 10651,
+    "test": 7102,
+    "test_pos": 7049,
+    "test_neg": 53
+  },
+  "sources_available": [
+    "UNS",
+    "CIC"
+  ],
+  "runs": [
+    {
+      "mcc": 0.0736,
+      "f1": 0.8995,
+      "precision": 0.9955,
+      "recall": 0.8204,
+      "n": 7102,
+      "n_pos": 7049,
+      "source": "UNS",
+      "k_percent": 0.0,
+      "mode": "zero-shot UNS"
+    },
+    {
+      "mcc": 0.4899,
+      "f1": 0.995,
+      "precision": 0.9972,
+      "recall": 0.9928,
+      "n": 7102,
+      "n_pos": 7049,
+      "source": "UNS",
+      "k_percent": 1.0,
+      "mode": "few-shot UNS+1%AWS",
+      "n_aws_train": 107
+    },
+    {
+      "mcc": 0.4787,
+      "f1": 0.9955,
+      "precision": 0.9966,
+      "recall": 0.9945,
+      "n": 7102,
+      "n_pos": 7049,
+      "source": "UNS",
+      "k_percent": 5.0,
+      "mode": "few-shot UNS+5%AWS",
+      "n_aws_train": 533
+    },
+    {
+      "mcc": 0.5879,
+      "f1": 0.9959,
+      "precision": 0.998,
+      "recall": 0.9939,
+      "n": 7102,
+      "n_pos": 7049,
+      "source": "UNS",
+      "k_percent": 10.0,
+      "mode": "few-shot UNS+10%AWS",
+      "n_aws_train": 1065
+    },
+    {
+      "mcc": 0.5955,
+      "f1": 0.9964,
+      "precision": 0.9977,
+      "recall": 0.995,
+      "n": 7102,
+      "n_pos": 7049,
+      "source": "UNS",
+      "k_percent": 20.0,
+      "mode": "few-shot UNS+20%AWS",
+      "n_aws_train": 2130
+    },
+    {
+      "mcc": 0.5739,
+      "f1": 0.9969,
+      "precision": 0.9967,
+      "recall": 0.997,
+      "n": 7102,
+      "n_pos": 7049,
+      "source": "UNS",
+      "k_percent": 50.0,
+      "mode": "few-shot UNS+50%AWS",
+      "n_aws_train": 5326
+    },
+    {
+      "mcc": -0.2172,
+      "f1": 0.0034,
+      "precision": 0.6316,
+      "recall": 0.0017,
+      "n": 7102,
+      "n_pos": 7049,
+      "source": "CIC",
+      "k_percent": 0.0,
+      "mode": "zero-shot CIC"
+    },
+    {
+      "mcc": 0.1315,
+      "f1": 0.9896,
+      "precision": 0.994,
+      "recall": 0.9852,
+      "n": 7102,
+      "n_pos": 7049,
+      "source": "CIC",
+      "k_percent": 1.0,
+      "mode": "few-shot CIC+1%AWS",
+      "n_aws_train": 107
+    },
+    {
+      "mcc": 0.3696,
+      "f1": 0.9947,
+      "precision": 0.9956,
+      "recall": 0.9939,
+      "n": 7102,
+      "n_pos": 7049,
+      "source": "CIC",
+      "k_percent": 5.0,
+      "mode": "few-shot CIC+5%AWS",
+      "n_aws_train": 533
+    },
+    {
+      "mcc": 0.2073,
+      "f1": 0.9955,
+      "precision": 0.9936,
+      "recall": 0.9973,
+      "n": 7102,
+      "n_pos": 7049,
+      "source": "CIC",
+      "k_percent": 10.0,
+      "mode": "few-shot CIC+10%AWS",
+      "n_aws_train": 1065
+    },
+    {
+      "mcc": 0.4562,
+      "f1": 0.9967,
+      "precision": 0.9951,
+      "recall": 0.9984,
+      "n": 7102,
+      "n_pos": 7049,
+      "source": "CIC",
+      "k_percent": 20.0,
+      "mode": "few-shot CIC+20%AWS",
+      "n_aws_train": 2130
+    },
+    {
+      "mcc": 0.1349,
+      "f1": 0.996,
+      "precision": 0.993,
+      "recall": 0.9991,
+      "n": 7102,
+      "n_pos": 7049,
+      "source": "CIC",
+      "k_percent": 50.0,
+      "mode": "few-shot CIC+50%AWS",
+      "n_aws_train": 5326
+    },
+    {
+      "mcc": 0.5975,
+      "f1": 0.9936,
+      "precision": 0.9999,
+      "recall": 0.9874,
+      "n": 7102,
+      "n_pos": 7049,
+      "source": "AWS",
+      "k_percent": 100.0,
+      "mode": "AWS-only (acuan atas)"
+    }
+  ]
+}

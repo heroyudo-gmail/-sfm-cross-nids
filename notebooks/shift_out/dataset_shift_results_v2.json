@@ -1,0 +1,113 @@
+{
+  "generated": "2026-09-09T23:49:36.955355Z",
+  "features": [
+    "duration",
+    "fwd_pkts",
+    "bwd_pkts",
+    "fwd_bytes",
+    "bwd_bytes",
+    "fwd_mean",
+    "bwd_mean",
+    "src_load",
+    "dst_load"
+  ],
+  "synthetic_cic_uns": false,
+  "n_flow": {
+    "CIC": 1623261,
+    "UNS": 172684,
+    "AWS-real": 44287
+  },
+  "median_per_feature": {
+    "CIC": {
+      "duration": 20761.0,
+      "fwd_pkts": 2.0,
+      "bwd_pkts": 1.0,
+      "fwd_bytes": 43.000000000000114,
+      "bwd_bytes": 101.0,
+      "fwd_mean": 36.0,
+      "bwd_mean": 66.0,
+      "src_load": 787.52371519999,
+      "dst_load": 3.6994640005159454
+    },
+    "UNS": {
+      "duration": 2782.5,
+      "fwd_pkts": 4.0,
+      "bwd_pkts": 2.0,
+      "fwd_bytes": 506.0,
+      "bwd_bytes": 178.0,
+      "fwd_mean": 73.0,
+      "bwd_mean": 44.0,
+      "src_load": 130438.726625,
+      "dst_load": 4.800330262722075
+    },
+    "AWS-real": {
+      "duration": 17000.0,
+      "fwd_pkts": 6.0,
+      "bwd_pkts": 4.0,
+      "fwd_bytes": 500.0,
+      "bwd_bytes": 1406.0,
+      "fwd_mean": 83.08333333333334,
+      "bwd_mean": 351.5,
+      "src_load": 15.677228002448096,
+      "dst_load": 0.1257604577680662
+    }
+  },
+  "wasserstein": [
+    {
+      "pasangan": "CIC vs UNS",
+      "duration": 0.028389598733490454,
+      "fwd_pkts": 0.020099031162145488,
+      "bwd_pkts": 0.07280617653189218,
+      "fwd_bytes": 0.05521757225263679,
+      "bwd_bytes": 0.05832175942450121,
+      "fwd_mean": 0.9904022562716502,
+      "bwd_mean": 0.3773060932891275,
+      "src_load": 1.0766815851660514,
+      "dst_load": 0.17221299201962095,
+      "RATA2": 0.31682634053901293
+    },
+    {
+      "pasangan": "CIC vs AWS-real",
+      "duration": 0.043364956482316856,
+      "fwd_pkts": 0.02118446910242448,
+      "bwd_pkts": 0.03820767055363715,
+      "fwd_bytes": 0.03590935708099195,
+      "bwd_bytes": 0.024524725461767236,
+      "fwd_mean": 0.5554481864183037,
+      "bwd_mean": 1.1587203335753795,
+      "src_load": 0.024976789502145796,
+      "dst_load": 0.17061120866666887,
+      "RATA2": 0.23032752187151503
+    },
+    {
+      "pasangan": "UNS vs AWS-real",
+      "duration": 0.05469232856657516,
+      "fwd_pkts": 0.02481135983885151,
+      "bwd_pkts": 0.093817028074628,
+      "fwd_bytes": 0.08284953074593301,
+      "bwd_bytes": 0.05822550503059078,
+      "fwd_mean": 0.774484896622552,
+      "bwd_mean": 1.154770838452348,
+      "src_load": 1.1011020869690522,
+      "dst_load": 0.0021370113972297585,
+      "RATA2": 0.37187673174419555
+    }
+  ],
+  "domain_classifier": [
+    {
+      "pasangan": "CIC vs UNS",
+      "akurasi_pembeda": 0.99,
+      "proxy_A_distance": 1.961
+    },
+    {
+      "pasangan": "CIC vs AWS-real",
+      "akurasi_pembeda": 0.994,
+      "proxy_A_distance": 1.975
+    },
+    {
+      "pasangan": "UNS vs AWS-real",
+      "akurasi_pembeda": 0.998,
+      "proxy_A_distance": 1.993
+    }
+  ]
+}

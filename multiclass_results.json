@@ -1,0 +1,389 @@
+{
+  "generated": "2026-09-17T01:35:52.667844Z",
+  "features": [
+    "duration",
+    "fwd_pkts",
+    "bwd_pkts",
+    "fwd_bytes",
+    "bwd_bytes",
+    "fwd_mean",
+    "bwd_mean",
+    "src_load",
+    "dst_load"
+  ],
+  "seed": 42,
+  "in_domain": {
+    "CIC": {
+      "dataset": "CIC",
+      "classes": [
+        "Benign",
+        "Botnet",
+        "BruteForce",
+        "DDoS",
+        "DoS",
+        "Infiltration",
+        "Other-rare"
+      ],
+      "n_test": 484150,
+      "macro_f1": 0.5906,
+      "weighted_f1": 0.9431,
+      "mcc": 0.8335,
+      "balanced_acc": 0.605,
+      "per_class": {
+        "Benign": {
+          "precision": 0.9824,
+          "recall": 0.9887,
+          "f1": 0.9855,
+          "support": 401751
+        },
+        "Botnet": {
+          "precision": 0.8515,
+          "recall": 0.9747,
+          "f1": 0.9089,
+          "support": 8586
+        },
+        "BruteForce": {
+          "precision": 0.7278,
+          "recall": 0.8858,
+          "f1": 0.7991,
+          "support": 11452
+        },
+        "DDoS": {
+          "precision": 0.7961,
+          "recall": 0.9433,
+          "f1": 0.8635,
+          "support": 37917
+        },
+        "DoS": {
+          "precision": 0.7702,
+          "recall": 0.4292,
+          "f1": 0.5512,
+          "support": 19628
+        },
+        "Infiltration": {
+          "precision": 0.4156,
+          "recall": 0.0133,
+          "f1": 0.0258,
+          "support": 4814
+        },
+        "Other-rare": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 2
+        }
+      },
+      "confusion": [
+        [
+          397230,
+          351,
+          1228,
+          2172,
+          680,
+          90,
+          0
+        ],
+        [
+          40,
+          8369,
+          0,
+          5,
+          172,
+          0,
+          0
+        ],
+        [
+          906,
+          0,
+          10144,
+          0,
+          402,
+          0,
+          0
+        ],
+        [
+          436,
+          498,
+          0,
+          35769,
+          1214,
+          0,
+          0
+        ],
+        [
+          1413,
+          605,
+          2227,
+          6959,
+          8424,
+          0,
+          0
+        ],
+        [
+          4333,
+          6,
+          338,
+          27,
+          46,
+          64,
+          0
+        ],
+        [
+          2,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ]
+    },
+    "UNSW": {
+      "dataset": "UNSW",
+      "classes": [
+        "Analysis",
+        "Backdoor",
+        "Benign",
+        "DoS",
+        "Exploits",
+        "Fuzzers",
+        "Generic",
+        "Other-rare",
+        "Recon",
+        "Shellcode"
+      ],
+      "n_test": 24415,
+      "macro_f1": 0.5051,
+      "weighted_f1": 0.8274,
+      "mcc": 0.7737,
+      "balanced_acc": 0.4819,
+      "per_class": {
+        "Analysis": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 203
+        },
+        "Backdoor": {
+          "precision": 0.4444,
+          "recall": 0.0229,
+          "f1": 0.0435,
+          "support": 175
+        },
+        "Benign": {
+          "precision": 0.8971,
+          "recall": 0.9664,
+          "f1": 0.9305,
+          "support": 10826
+        },
+        "DoS": {
+          "precision": 0.4267,
+          "recall": 0.4821,
+          "f1": 0.4527,
+          "support": 1226
+        },
+        "Exploits": {
+          "precision": 0.6647,
+          "recall": 0.7265,
+          "f1": 0.6942,
+          "support": 3338
+        },
+        "Fuzzers": {
+          "precision": 0.5369,
+          "recall": 0.3444,
+          "f1": 0.4196,
+          "support": 1815
+        },
+        "Generic": {
+          "precision": 0.9925,
+          "recall": 0.9793,
+          "f1": 0.9859,
+          "support": 5658
+        },
+        "Other-rare": {
+          "precision": 0.7143,
+          "recall": 0.3846,
+          "f1": 0.5,
+          "support": 13
+        },
+        "Recon": {
+          "precision": 0.9089,
+          "recall": 0.7805,
+          "f1": 0.8398,
+          "support": 1048
+        },
+        "Shellcode": {
+          "precision": 0.3061,
+          "recall": 0.1327,
+          "f1": 0.1852,
+          "support": 113
+        }
+      },
+      "confusion": [
+        [
+          0,
+          0,
+          12,
+          46,
+          106,
+          39,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          4,
+          2,
+          36,
+          95,
+          37,
+          0,
+          0,
+          1,
+          0
+        ],
+        [
+          3,
+          0,
+          10462,
+          10,
+          70,
+          247,
+          5,
+          0,
+          20,
+          9
+        ],
+        [
+          1,
+          1,
+          75,
+          591,
+          482,
+          61,
+          7,
+          0,
+          2,
+          6
+        ],
+        [
+          2,
+          1,
+          201,
+          512,
+          2425,
+          128,
+          19,
+          1,
+          46,
+          3
+        ],
+        [
+          2,
+          1,
+          789,
+          104,
+          267,
+          625,
+          8,
+          0,
+          5,
+          14
+        ],
+        [
+          0,
+          0,
+          31,
+          10,
+          65,
+          7,
+          5541,
+          1,
+          2,
+          1
+        ],
+        [
+          0,
+          0,
+          2,
+          1,
+          5,
+          0,
+          0,
+          5,
+          0,
+          0
+        ],
+        [
+          0,
+          2,
+          33,
+          69,
+          121,
+          4,
+          0,
+          0,
+          818,
+          1
+        ],
+        [
+          0,
+          0,
+          55,
+          6,
+          12,
+          16,
+          3,
+          0,
+          6,
+          15
+        ]
+      ]
+    }
+  },
+  "cross_dataset": [
+    {
+      "direction": "CIC->UNSW",
+      "classes": [
+        "Benign",
+        "DoS"
+      ],
+      "n_test": 40173,
+      "macro_f1": 0.4732,
+      "mcc": 0.0,
+      "confusion": [
+        [
+          36087,
+          0
+        ],
+        [
+          4086,
+          0
+        ]
+      ]
+    },
+    {
+      "direction": "UNSW->CIC",
+      "classes": [
+        "Benign",
+        "DoS"
+      ],
+      "n_test": 1404595,
+      "macro_f1": 0.4042,
+      "mcc": -0.1179,
+      "confusion": [
+        [
+          921247,
+          417922
+        ],
+        [
+          61787,
+          3639
+        ]
+      ]
+    }
+  ]
+}
